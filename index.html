@@ -190,7 +190,7 @@ header{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--
 
   <!-- CONTROLS -->
   <div class="controls">
-    <input class="ctrl-input" type="text" id="symIn" placeholder="NIFTY, RELIANCE…" value="NIFTY">
+    <input class="ctrl-input" type="text" id="symIn" placeholder="NIFTY, RELIANCE, TCS…" value="NIFTY">
     <select class="ctrl-sel" id="exchIn">
       <option value="NSE">NSE</option><option value="BSE">BSE</option>
     </select>
@@ -294,11 +294,28 @@ function init(){
 // ═══════════════════════════════════════════════════════════════
 // DATA FETCH
 // ═══════════════════════════════════════════════════════════════
+// Twelve Data symbol map — indices use different tickers
+const TD_SYMBOL_MAP = {
+  'NIFTY':    'NSEI',       // Nifty 50 index
+  'NIFTY50':  'NSEI',
+  'BANKNIFTY':'NSEBANK',    // Bank Nifty index
+  'NIFTYMIDCAP':'NIFMDCP50',
+  'SENSEX':   'BSESN',
+};
+
+function resolveTDSymbol(symbol, exchange){
+  const upper = symbol.toUpperCase();
+  // If it's a known index, return the mapped name (no exchange suffix)
+  if(TD_SYMBOL_MAP[upper]) return TD_SYMBOL_MAP[upper];
+  // For regular NSE stocks, Twelve Data uses SYMBOL:NSE format
+  return `${upper}:${exchange}`;
+}
+
 async function fetchTD(symbol, exchange, interval, size=100){
-  const sym = `${symbol}:${exchange}`;
+  const sym = resolveTDSymbol(symbol, exchange);
   const url = `${PROXY}/time_series?symbol=${encodeURIComponent(sym)}&interval=${interval}&outputsize=${size}&apikey=${apiKey}`;
   const r = await fetch(url); const j = await r.json();
-  if(j.status==='error') throw new Error(j.message||'API error');
+  if(j.status==='error') throw new Error(`${j.message||'API error'} (tried symbol: ${sym})`);
   if(!j.values?.length) throw new Error('No data returned — check symbol');
   return j.values.reverse().map(v=>({
     t:new Date(v.datetime).getTime(),
