@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>TradeMind — NSE High-Conviction Agent</title>
+<title>TradeMind — NSE Stock High-Conviction Agent</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
@@ -162,7 +162,7 @@ header{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--
 
 <!-- HEADER -->
 <header>
-  <div class="logo">TradeMind<em> / NSE</em></div>
+  <div class="logo">TradeMind<em> / NSE STOCKS</em></div>
   <div class="hbadge hc">HIGH-CONVICTION MODE</div>
   <div id="liveBadge" class="hbadge live">● LIVE DATA</div>
   <div class="header-right">
@@ -182,7 +182,7 @@ header{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--
 
   <!-- API BANNER -->
   <div class="api-banner" id="apiBanner">
-    <span class="api-banner-txt">⚡ NIFTY &amp; BANKNIFTY work without a key. For NSE stocks (RELIANCE, TCS etc.) enter Twelve Data key →</span>
+    <span class="api-banner-txt">⚡ NSE-listed equities only. Enter your Twelve Data API key to load live stock data →</span>
     <input type="text" id="apiKeyInput" placeholder="Paste Twelve Data API key…" autocomplete="off">
     <button class="btn btn-go" onclick="saveKey()">Save</button>
     <a href="https://twelvedata.com/apikey" target="_blank" style="font-size:10px;color:var(--accent2);font-family:var(--mono);white-space:nowrap">Get free key ↗</a>
@@ -190,10 +190,8 @@ header{display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--
 
   <!-- CONTROLS -->
   <div class="controls">
-    <input class="ctrl-input" type="text" id="symIn" placeholder="NIFTY, RELIANCE, TCS…" value="NIFTY">
-    <select class="ctrl-sel" id="exchIn">
-      <option value="NSE">NSE</option><option value="BSE">BSE</option>
-    </select>
+    <input class="ctrl-input" type="text" id="symIn" placeholder="NSE symbol e.g. RELIANCE, TCS…" value="RELIANCE" autocomplete="off">
+    <span class="hbadge hc" title="NSE-listed equities only">NSE</span>
     <select class="ctrl-sel" id="ivIn">
       <option value="1day">Daily</option>
       <option value="4h">4 Hour</option>
@@ -270,7 +268,7 @@ let D = null;      // price data
 let IND = null;    // indicators
 let SC = null;     // scores
 let chatHistory = [];
-const PROXY = 'https://api.twelvedata.com';
+const TD_API = 'https://api.twelvedata.com';
 
 // ═══════════════════════════════════════════════════════════════
 // API KEY
@@ -299,131 +297,45 @@ function init(){
 // ═══════════════════════════════════════════════════════════════
 // DATA FETCH
 // ═══════════════════════════════════════════════════════════════
-// ── SYMBOL ROUTING ──────────────────────────────────────────
-// Indices → Yahoo Finance (free, no key needed)
-// NSE Stocks → Twelve Data (needs API key)
+// ── NSE EQUITY DATA FETCH ─────────────────────────────────────
+// TradeMind intentionally supports individual NSE-listed equities only.
+// No index symbols, Yahoo Finance routing, or public CORS proxy fallbacks.
 
-const YAHOO_INDEX_MAP = {
-  'NIFTY':      '^NSEI',
-  'NIFTY50':    '^NSEI',
-  'BANKNIFTY':  '^NSEBANK',
-  'FINNIFTY':   '^NSEFIN',
-  'SENSEX':     '^BSESN',
-  'MIDCPNIFTY': '^NSEMDCP50',
-  'INDIAVIX':   '^INDIAVIX',
-  'VIX':        '^INDIAVIX',
-};
-
-// Yahoo Finance interval map
-const YF_INTERVAL_MAP = {
-  '15min': '15m', '1h': '1h', '4h': '1h', // 4h not native in YF, use 1h
-  '1day': '1d', '1week': '1wk'
-};
-const YF_RANGE_MAP = {
-  '15min': '5d', '1h': '60d', '4h': '60d', '1day': '1y', '1week': '5y'
-};
-// Twelve Data interval map
 const TD_INTERVAL_MAP = {
   '15min':'15min','1h':'1h','4h':'4h','1day':'1day','1week':'1week'
 };
 
-function isIndex(symbol){
-  return !!YAHOO_INDEX_MAP[symbol.toUpperCase().trim()];
-}
-
-// ── YAHOO FINANCE FETCH (indices, free) ─────────────────────
-async function fetchYahoo(symbol, interval){
-  const yfSym     = YAHOO_INDEX_MAP[symbol.toUpperCase().trim()];
-  const yfInterval = YF_INTERVAL_MAP[interval] || '1d';
-  const yfRange    = YF_RANGE_MAP[interval]    || '1y';
-  const yfUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(yfSym)}?interval=${yfInterval}&range=${yfRange}&includePrePost=false`;
-
-  // Try multiple CORS proxies in sequence
-  const proxies = [
-    u => `https://corsproxy.io/?${encodeURIComponent(u)}`,
-    u => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(u)}`,
-    u => `https://api.allorigins.win/get?url=${encodeURIComponent(u)}`,
-  ];
-
-  let raw = null;
-  let lastErr = '';
-
-  for(const makeProxy of proxies){
-    try{
-      const r = await fetch(makeProxy(yfUrl), {signal: AbortSignal.timeout(8000)});
-      if(!r.ok) continue;
-      const text = await r.text();
-      // allorigins wraps in {contents:...}, others return raw JSON
-      let parsed;
-      try { parsed = JSON.parse(text); } catch{ continue; }
-      // unwrap allorigins envelope if present
-      if(parsed.contents) { try{ parsed = JSON.parse(parsed.contents); }catch{ continue; } }
-      if(parsed?.chart?.result?.[0]){ raw = parsed; break; }
-    } catch(e){ lastErr = e.message; }
+async function fetchData(symbol, interval){
+  if(!apiKey) throw new Error('Enter your Twelve Data API key in the banner before analysing a stock.');
+  const cleanSymbol = symbol.toUpperCase().trim();
+  if(!/^[A-Z0-9&._-]{1,30}$/.test(cleanSymbol)){
+    throw new Error('Enter a valid NSE stock symbol, for example RELIANCE, TCS, INFY or HDFCBANK.');
   }
-
-  if(!raw) throw new Error(`Could not fetch ${yfSym} data. All proxies failed. Try again in a moment.`);
-
-  const result = raw.chart.result[0];
-  const ts = result.timestamp;
-  const q  = result.indicators.quote[0];
-  return ts.map((t,i)=>({
-    t: t*1000,
-    o: +(q.open[i]  || q.close[i] || 0).toFixed(2),
-    h: +(q.high[i]  || q.close[i] || 0).toFixed(2),
-    l: +(q.low[i]   || q.close[i] || 0).toFixed(2),
-    c: +(q.close[i] || 0).toFixed(2),
-    v: +(q.volume[i]|| 0)
-  })).filter(d => d.c > 0);
-}
-
-// ── TWELVE DATA FETCH (NSE stocks) ──────────────────────────
-async function fetchTD(symbol, exchange, interval){
-  if(!apiKey) throw new Error('No API key — enter your Twelve Data key in the yellow banner above.');
-  const sym = `${symbol.toUpperCase().trim()}:${exchange}`;
   const tdInterval = TD_INTERVAL_MAP[interval] || '1day';
-  const url = `${PROXY}/time_series?symbol=${encodeURIComponent(sym)}&interval=${tdInterval}&outputsize=100&apikey=${apiKey}`;
-  let j;
-  try { const r = await fetch(url); j = await r.json(); }
-  catch(e){ throw new Error('Network error — check your internet connection'); }
-  if(j.status==='error'){
-    const msg = j.message||'';
-    if(msg.toLowerCase().includes('symbol')||msg.toLowerCase().includes('figi'))
-      throw new Error(`"${sym}" not found. Try: RELIANCE, TCS, INFY, HDFCBANK, WIPRO, ICICIBANK`);
-    if(msg.toLowerCase().includes('apikey')||msg.toLowerCase().includes('api key'))
-      throw new Error('Invalid API key — re-enter your Twelve Data key in the banner above.');
-    throw new Error(msg||'Twelve Data API error');
+  const url = `${TD_API}/time_series?symbol=${encodeURIComponent(cleanSymbol + ':NSE')}&interval=${tdInterval}&outputsize=500&apikey=${encodeURIComponent(apiKey)}`;
+  let response, j;
+  try {
+    response = await fetch(url);
+    j = await response.json();
+  } catch(e) {
+    throw new Error('Could not reach Twelve Data. Check your internet connection and try again.');
   }
-  if(!j.values?.length) throw new Error(`No data for "${sym}". Check symbol and exchange.`);
-  return j.values.reverse().map(v=>({
+  if(!response.ok || j.status==='error'){
+    const msg = j.message || `Twelve Data returned HTTP ${response.status}`;
+    if(/symbol|figi|not found/i.test(msg))
+      throw new Error(`"${cleanSymbol}:NSE" was not found by Twelve Data. Check the NSE symbol.`);
+    if(/apikey|api key|unauthorized/i.test(msg))
+      throw new Error('Invalid or missing Twelve Data API key. Re-enter your key in the banner.');
+    if(/limit|credits|api calls/i.test(msg))
+      throw new Error('Twelve Data API limit reached. Wait for the quota to reset or check your plan.');
+    throw new Error(msg);
+  }
+  if(!Array.isArray(j.values) || !j.values.length)
+    throw new Error(`No price data returned for ${cleanSymbol}:NSE.`);
+  return j.values.slice().reverse().map(v=>({
     t:new Date(v.datetime).getTime(),
     o:+v.open, h:+v.high, l:+v.low, c:+v.close, v:+(v.volume||0)
-  }));
-}
-
-// ── UNIFIED FETCH ────────────────────────────────────────────
-async function fetchData(symbol, exchange, interval){
-  if(isIndex(symbol)){
-    return await fetchYahoo(symbol, interval);   // free, no key
-  } else {
-    return await fetchTD(symbol, exchange, interval); // needs Twelve Data key
-  }
-}
-function demo(sym, n=90){
-  const seeds={NIFTY:21500,BANKNIFTY:46000,RELIANCE:2400,TCS:3800,INFY:1800,HDFCBANK:1600,ICICIBANK:1050,WIPRO:480,HINDUNILVR:2700,BHARTIARTL:1200,ADANIENT:2900};
-  let p = seeds[sym.toUpperCase()] || 1200;
-  const d=[]; const now=Date.now();
-  for(let i=n;i>=0;i--){
-    const rng=p*(0.007+Math.random()*0.018);
-    const drift=(Math.random()-.47)*rng;
-    const o=p+(Math.random()-.5)*rng*.4;
-    const c=o+drift;
-    const h=Math.max(o,c)+Math.random()*rng*.5;
-    const l=Math.min(o,c)-Math.random()*rng*.5;
-    d.push({t:now-i*86400000,o:+o.toFixed(2),h:+h.toFixed(2),l:+l.toFixed(2),c:+c.toFixed(2),v:Math.floor(5e5+Math.random()*9e6)});
-    p=c;
-  }
-  return d;
+  })).filter(d=>Number.isFinite(d.t)&&[d.o,d.h,d.l,d.c].every(Number.isFinite)&&d.c>0);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1041,8 +953,7 @@ function updateMeter(sc,sig){
 // MAIN RUN
 // ═══════════════════════════════════════════════════════════════
 async function run(){
-  const sym=document.getElementById('symIn').value.trim().toUpperCase()||'NIFTY';
-  const exch=document.getElementById('exchIn').value;
+  const sym=document.getElementById('symIn').value.trim().toUpperCase();
   const iv=document.getElementById('ivIn').value;
   const btn=document.getElementById('goBtn');
   btn.disabled=true;btn.textContent='⏳';
@@ -1050,15 +961,11 @@ async function run(){
   document.getElementById('agentDot').style.background='var(--warn)';
   const ov=document.getElementById('chartOverlay');ov.style.display='flex';
   try{
-    const isIdx = isIndex(sym);
-    document.getElementById('overlayMsg').textContent = isIdx
-      ? 'Fetching index data from Yahoo Finance…'
-      : apiKey ? 'Fetching NSE stock data from Twelve Data…' : 'No API key — using demo data';
-    if(!isIdx && !apiKey){
-      await delay(400); D=demo(sym);
-    } else {
-      D = await fetchData(sym, exch, iv);
-    }
+    if(!sym) throw new Error('Enter an NSE stock symbol to analyse.');
+    if(!apiKey) throw new Error('Enter your Twelve Data API key in the banner before analysing a stock.');
+    document.getElementById('overlayMsg').textContent='Fetching NSE stock data from Twelve Data…';
+    D = await fetchData(sym, iv);
+    if(D.length < 210) throw new Error(`Only ${D.length} candles returned. At least 210 are recommended for reliable EMA 200 and indicator calculations. Try Daily or Weekly data, or increase your Twelve Data output allowance.`);
     document.getElementById('overlayMsg').textContent='Computing 11 indicators…';
     await delay(80);
     IND=computeAll(D);
@@ -1097,6 +1004,7 @@ You only endorse high-conviction trades. Be concise. Mention SL/TP using ATR log
 
 function delay(ms){return new Promise(r=>setTimeout(r,ms));}
 function clearAll(){
+  D=null; IND=null; SC=null; chatHistory=[];
   document.getElementById('alertsList').innerHTML='';
   document.getElementById('alertsEmpty').style.display='block';
   document.getElementById('analysisContent').innerHTML='';
